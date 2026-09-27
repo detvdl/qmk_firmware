@@ -17,13 +17,79 @@
  */
 #include QMK_KEYBOARD_H
 
-const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
-    [0] = LAYOUT( MS_BTN4, MS_BTN5, DRAG_SCROLL, MS_BTN2, MS_BTN1, MS_BTN3 ),
-    [1] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, QK_BOOT, KC_TRNS ),
-    [2] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS ),
-    [3] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS ),
-    [4] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS ),
-    [5] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS ),
-    [6] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS ),
-    [7] = LAYOUT( DRAG_SCROLL, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS, KC_TRNS )
-};
+static bool scroll_active = false;
+
+#ifndef SCROLL_DIVISOR_V
+#    define SCROLL_DIVISOR_V 64.0
+#endif
+#ifndef SCROLL_DIVISOR_H
+#    define SCROLL_DIVISOR_H 64.0
+#endif
+static float scroll_acc_v = 0;
+static float scroll_acc_h = 0;
+
+#ifndef SCROLL_LOCKOUT_MS
+#    define SCROLL_LOCKOUT_MS 50
+#endif
+static uint32_t scroll_start_time = 0;
+
+#ifndef SCROLL_DEADZONE
+#    define SCROLL_DEADZONE 1
+#endif
+
+#ifndef SCROLL_AXIS_DOMINANCE_RATIO
+#    define SCROLL_AXIS_DOMINANCE_RATIO 1.0
+#endif
+
+report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
+    if (scroll_active) {
+        bool in_lockout = timer_elapsed32(scroll_start_time) < SCROLL_LOCKOUT_MS;
+
+        int8_t dy = mouse_report.y;
+        int8_t dx = mouse_report.x;
+
+        bool suppress_v = false;
+        bool suppress_h = false;
+        if (abs(dy) > abs(dx) * SCROLL_AXIS_DOMINANCE_RATIO) {
+            suppress_h = true;
+        } else if (abs(dx) > abs(dy) * SCROLL_AXIS_DOMINANCE_RATIO) {
+            suppress_v = true;
+        }
+
+        if (in_lockout || suppress_v || abs(dy) < SCROLL_DEADZONE) {
+            mouse_report.v = 0;
+        } else {
+            scroll_acc_v += (float)dy / SCROLL_DIVISOR_V;
+            mouse_report.v = -(int8_t)scroll_acc_v;
+            scroll_acc_v  -=  (int8_t)scroll_acc_v;
+        }
+
+        if (in_lockout || suppress_h || abs(dx) < SCROLL_DEADZONE) {
+            mouse_report.h = 0;
+        } else {
+            scroll_acc_h += (float)dx / SCROLL_DIVISOR_H;
+            mouse_report.h  = (int8_t)scroll_acc_h;
+            scroll_acc_h   -= (int8_t)scroll_acc_h;
+        }
+
+        mouse_report.x = 0;
+        mouse_report.y = 0;
+    }
+    return mouse_report;
+}
+
+bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    switch (keycode) {
+        case SCRL:
+            scroll_active = record->event.pressed;
+            scroll_acc_v = 0;
+            scroll_acc_h = 0;
+            if (record->event.pressed) {
+                scroll_start_time = timer_read32();
+            }
+            return false;
+    }
+    return true;
+}
+
+
