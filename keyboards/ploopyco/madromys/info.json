@@ -29,7 +29,23 @@
             ]
         }
     },
-    "dynamic_keymap": {
-        "layer_count": 8
-    }
+    "keymaps": {
+      "vandael": {
+        "point": "vandael.c",
+        "matrix_rows": 12,
+        "matrix_cols": 12,
+        "layer_count": 11,
+        "extra": {
+          "user": {
+            "name": "vandael"
+          }
+        }
+      },
+      "vandaeld": {
+        "point": "vandaeld/keymap.c",
+        "matrix_rows": 1,
+        "matrix_cols": 1,
+        "layer_count": 2
+      }
+    },
 }
