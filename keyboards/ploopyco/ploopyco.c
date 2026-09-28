@@ -49,7 +49,7 @@
 #    define PLOOPY_DRAGSCROLL_DIVISOR_H 8.0
 #endif
 #ifndef PLOOPY_DRAGSCROLL_DIVISOR_V
-#    define PLOOPY_DRAGSCROLL_DIVISOR_V 8.0
+#    define PLOOPY_DRAGSCROLL_DIVISOR_V 48.0
 #endif
 #ifndef ENCODER_BUTTON_ROW
 #    define ENCODER_BUTTON_ROW 0
@@ -65,6 +65,8 @@ uint16_t          dpi_array[] = PLOOPY_DPI_OPTIONS;
 // Trackball State
 bool  is_scroll_clicked    = false;
 bool  is_drag_scroll       = false;
+bool  drag_scroll_was_enabled = false; // Track if drag scroll was enabled in the last cycle
+uint32_t drag_scroll_last_update = 0; // Track when drag scroll was last updated for timing
 float scroll_accumulated_h = 0;
 float scroll_accumulated_v = 0;
 
@@ -132,6 +134,26 @@ void toggle_drag_scroll(void) {
     is_drag_scroll ^= 1;
 }
 
+// Reset accumulators and tracking when drag scroll is disabled
+__attribute__((weak)) void drag_scroll_reset(void) {
+    if (!is_drag_scroll) {
+        scroll_accumulated_h = 0;
+        scroll_accumulated_v = 0;
+        drag_scroll_last_update = 0;
+    }
+}
+
+// Check if enough time has passed to reset accumulators (every 500ms)
+__attribute__((weak)) bool drag_scroll_check_reset(void) {
+    if (is_drag_scroll && timer_elapsed(drag_scroll_last_update) > 500) {
+        scroll_accumulated_h = 0;
+        scroll_accumulated_v = 0;
+        drag_scroll_last_update = timer_read();
+        return true;
+    }
+    return false;
+}
+
 void cycle_dpi(void) {
     keyboard_config.dpi_config = (keyboard_config.dpi_config + 1) % DPI_OPTION_SIZE;
     eeconfig_update_kb(keyboard_config.raw);
@@ -140,28 +162,43 @@ void cycle_dpi(void) {
 
 report_mouse_t pointing_device_task_kb(report_mouse_t mouse_report) {
     mouse_report = pointing_device_task_user(mouse_report);
-    if (is_drag_scroll) {
-        scroll_accumulated_h += (float)mouse_report.x / PLOOPY_DRAGSCROLL_DIVISOR_H;
-        scroll_accumulated_v += (float)mouse_report.y / PLOOPY_DRAGSCROLL_DIVISOR_V;
 
-        // Assign integer parts of accumulated scroll values to the mouse report
-        mouse_report.h = (int8_t)scroll_accumulated_h;
+    // Check if we should reset accumulators (every 500ms when drag scroll is active)
+    drag_scroll_check_reset();
+
+    // Check if drag scroll is enabled
+    if (is_drag_scroll) {
+        // Check if drag scroll is still enabled (not just from a previous cycle)
+        // We need to check the matrix state, so we use a small threshold
+        if (timer_elapsed(drag_scroll_last_update) < 10) {
+            // Accumulate mouse movement
+            scroll_accumulated_h += (float)mouse_report.x / PLOOPY_DRAGSCROLL_DIVISOR_H;
+            scroll_accumulated_v += (float)mouse_report.y / PLOOPY_DRAGSCROLL_DIVISOR_V;
+
+            // Assign integer parts of accumulated scroll values to the mouse report
+            mouse_report.h = (int8_t)scroll_accumulated_h;
 #ifdef PLOOPY_DRAGSCROLL_INVERT
-        mouse_report.v = -(int8_t)scroll_accumulated_v;
+            mouse_report.v = -(int8_t)scroll_accumulated_v;
 #else
-        mouse_report.v = (int8_t)scroll_accumulated_v;
+            mouse_report.v = (int8_t)scroll_accumulated_v;
 #endif
 
-        // Update accumulated scroll values by subtracting the integer parts
-        scroll_accumulated_h -= (int8_t)scroll_accumulated_h;
-        scroll_accumulated_v -= (int8_t)scroll_accumulated_v;
+            // Update accumulated scroll values by subtracting the integer parts
+            scroll_accumulated_h -= (int8_t)scroll_accumulated_h;
+            scroll_accumulated_v -= (int8_t)scroll_accumulated_v;
 
-        // Clear the X and Y values of the mouse report
-        mouse_report.x = 0;
-        mouse_report.y = 0;
+            // Clear the X and Y values of the mouse report
+            mouse_report.x = 0;
+            mouse_report.y = 0;
 
-        mouse_report.x = 0;
-        mouse_report.y = 0;
+            // Update the last update time
+            drag_scroll_last_update = timer_read();
+        }
+    } else {
+        // Reset accumulators when drag scroll is disabled
+        scroll_accumulated_h = 0;
+        scroll_accumulated_v = 0;
+        drag_scroll_last_update = 0;
     }
 
     return mouse_report;
@@ -189,13 +226,18 @@ bool process_record_kb(uint16_t keycode, keyrecord_t* record) {
     }
 
     if (keycode == DRAG_SCROLL) {
-#ifdef PLOOPY_DRAGSCROLL_MOMENTARY
-        is_drag_scroll = record->event.pressed;
-#else
-        if (record->event.pressed) {
-            toggle_drag_scroll();
+        // Always use momentary behavior - drag scroll only works while pressed
+        bool currently_pressed = record->event.pressed;
+        is_drag_scroll = currently_pressed;
+        drag_scroll_was_enabled = is_drag_scroll;
+        if (is_drag_scroll) {
+            drag_scroll_last_update = timer_read();
+        } else {
+            // Reset accumulators when drag scroll is disabled
+            scroll_accumulated_h = 0;
+            scroll_accumulated_v = 0;
+            drag_scroll_last_update = 0;
         }
-#endif
     }
 
     return true;
